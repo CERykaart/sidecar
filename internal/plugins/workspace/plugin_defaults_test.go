@@ -1,8 +1,6 @@
 package workspace
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/marcus/sidecar/internal/config"
@@ -27,17 +25,23 @@ func TestGetDefaultCreateAgentType_FromConfig(t *testing.T) {
 
 func TestGetDefaultCreateAgentType_SidecarAgentPrecedence(t *testing.T) {
 	workDir := t.TempDir()
+	projectRoot := workDir
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
 	cfg := config.Default()
 	cfg.Plugins.Workspace.DefaultAgentType = string(AgentGemini)
 
-	if err := os.WriteFile(filepath.Join(workDir, sidecarAgentFile), []byte(string(AgentCodex)+"\n"), 0644); err != nil {
-		t.Fatalf("write .sidecar-agent: %v", err)
+	// Use saveAgentType to write to centralized storage (same as production code).
+	if err := saveAgentType(projectRoot, workDir, AgentCodex); err != nil {
+		t.Fatalf("saveAgentType: %v", err)
 	}
 
 	p := &Plugin{
 		ctx: &plugin.Context{
-			WorkDir: workDir,
-			Config:  cfg,
+			WorkDir:     workDir,
+			ProjectRoot: projectRoot,
+			Config:      cfg,
 		},
 	}
 
@@ -103,17 +107,23 @@ func TestResolveWorktreeAgentType_UsesConfigWhenNoSidecarFile(t *testing.T) {
 
 func TestResolveWorktreeAgentType_SidecarFilePrecedence(t *testing.T) {
 	workDir := t.TempDir()
+	projectRoot := workDir
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
+
 	cfg := config.Default()
 	cfg.Plugins.Workspace.DefaultAgentType = string(AgentGemini)
 
-	if err := os.WriteFile(filepath.Join(workDir, sidecarAgentFile), []byte(string(AgentCodex)+"\n"), 0644); err != nil {
-		t.Fatalf("write .sidecar-agent: %v", err)
+	// Use saveAgentType to write to centralized storage (same as production code).
+	if err := saveAgentType(projectRoot, workDir, AgentCodex); err != nil {
+		t.Fatalf("saveAgentType: %v", err)
 	}
 
 	p := &Plugin{
 		ctx: &plugin.Context{
-			WorkDir: workDir,
-			Config:  cfg,
+			WorkDir:     workDir,
+			ProjectRoot: projectRoot,
+			Config:      cfg,
 		},
 	}
 	wt := &Worktree{Path: workDir}

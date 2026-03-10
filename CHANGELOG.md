@@ -2,6 +2,23 @@
 
 All notable changes to sidecar are documented here.
 
+## [v0.78.0] - 2026-03-09
+
+### Features
+
+- Agent-powered PR description generation in merge workflow (#167)
+- Configurable default agent type and `.sidecar-agent-start` override per worktree (#198)
+- OpenCode adapter backward-compatible conversation updates (#199)
+
+### Bug Fixes
+
+- Prevent tmux server exit when all sessions are killed
+- Fix centralized agent file tests to use correct storage path
+
+### Dependencies
+
+- Bump td to v0.42.0
+
 ## [v0.77.0] - 2026-02-28
 
 ### Features

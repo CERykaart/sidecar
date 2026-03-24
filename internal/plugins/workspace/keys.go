@@ -576,6 +576,19 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			p.moveCursor(1)
 			return p.loadSelectedContent()
 		}
+		// Terminal panel split: switch focus between agent and terminal sub-panes
+		// Only applies on Output tab (or shell view) where the terminal panel is rendered
+		if p.activePane == PanePreview && p.termPanelVisible && p.termPanelLayout == TermPanelBottom && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			if !p.termPanelFocused {
+				p.termPanelFocused = true
+				return nil
+			}
+			// Already at terminal panel (bottom) — scroll down
+			if p.termPanelScroll > 0 {
+				p.termPanelScroll--
+			}
+			return nil
+		}
 		// Diff tab: route to internal two-pane navigation
 		if p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
@@ -598,11 +611,19 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			p.moveCursor(-1)
 			return p.loadSelectedContent()
 		}
+		// Terminal panel split: switch focus between agent and terminal sub-panes
+		// Only applies on Output tab (or shell view) where the terminal panel is rendered
+		if p.activePane == PanePreview && p.termPanelVisible && p.termPanelLayout == TermPanelBottom && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			if p.termPanelFocused {
+				p.termPanelFocused = false
+				return nil
+			}
+			// Already at agent (top) — fall through to scroll agent output
+		}
 		// Diff tab: route to internal two-pane navigation
 		if p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
-		// Shell/other tabs: scroll up toward older content (increase offset from bottom)
 		p.autoScrollOutput = false
 		p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
 		p.previewOffset++
@@ -629,6 +650,13 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			}
 			p.scrollOffset = 0
 			return p.loadSelectedContent()
+		}
+		// Terminal panel focused: scroll to top of terminal panel output
+		if p.activePane == PanePreview && p.termPanelFocused && p.termPanelVisible && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			if p.termPanelOutput != nil {
+				p.termPanelScroll = p.termPanelOutput.LineCount() // Will be clamped in render
+			}
+			return nil
 		}
 		// Diff tab: route to internal two-pane navigation
 		if p.previewTab == PreviewTabDiff {
@@ -660,6 +688,11 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 				return p.loadSelectedContent()
 			}
 			// No worktrees, stay on shell
+			return nil
+		}
+		// Terminal panel focused: scroll to bottom of terminal panel output
+		if p.activePane == PanePreview && p.termPanelFocused && p.termPanelVisible && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			p.termPanelScroll = 0
 			return nil
 		}
 		// Diff tab: route to internal two-pane navigation
@@ -724,6 +757,9 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		}
 		if p.activePane == PaneSidebar {
 			p.activePane = PanePreview
+		} else if p.activePane == PanePreview && p.termPanelVisible && p.termPanelLayout == TermPanelRight && !p.termPanelFocused && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			// Right layout: move focus from agent to terminal panel
+			p.termPanelFocused = true
 		} else if p.activePane == PanePreview && p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
@@ -739,6 +775,13 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			oldWorktreeIdx := p.selectedIdx
 			p.syncKanbanToList()
 			p.applyKanbanSelectionChange(oldShellSelected, oldShellIdx, oldWorktreeIdx)
+		}
+		// Terminal panel focused: enter interactive mode for the terminal panel
+		if p.termPanelFocused && p.termPanelVisible {
+			if cmd := p.enterTermPanelInteractiveMode(); cmd != nil {
+				return cmd
+			}
+			return nil
 		}
 		// Enter interactive mode (tmux input passthrough) - feature gated
 		// Only from Output tab or sidebar — Diff/Task tabs have no terminal to attach to.
@@ -794,10 +837,16 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			p.moveKanbanColumn(-1)
 			return nil
 		}
+		if p.activePane == PanePreview && p.termPanelVisible && p.termPanelLayout == TermPanelRight && p.termPanelFocused && (p.previewTab == PreviewTabOutput || p.shellSelected) {
+			// Right layout: move focus from terminal panel back to agent
+			p.termPanelFocused = false
+			return nil
+		}
 		if p.activePane == PanePreview && p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
 		if p.activePane == PanePreview {
+			p.termPanelFocused = false // Reset when leaving preview
 			p.activePane = PaneSidebar
 		}
 	case "esc":
@@ -818,6 +867,7 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 				p.commitDetail = nil
 				p.commitFileDiffRaw = ""
 				p.commitFileParsed = nil
+				p.fullFileDiff = nil
 				return nil
 			case DiffTabFocusDiff:
 				p.diffTabFocus = DiffTabFocusFileList
@@ -825,6 +875,7 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			}
 		}
 		if p.activePane == PanePreview {
+			p.termPanelFocused = false
 			p.activePane = PaneSidebar
 		}
 	case "+":
@@ -859,13 +910,25 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		p.toggleSidebar()
 		if p.viewMode == ViewModeInteractive {
 			// Poll captures cursor atomically - no separate query needed
-			return tea.Batch(p.resizeInteractivePaneCmd(), p.pollInteractivePaneImmediate())
+			resizeCmds := []tea.Cmd{p.resizeInteractivePaneCmd(), p.pollInteractivePaneImmediate()}
+			// Also resize the non-interactive pane so both sides match
+			if p.termPanelVisible && p.interactiveState != nil {
+				if p.interactiveState.TermPanel {
+					resizeCmds = append(resizeCmds, p.resizeSelectedPaneCmd())
+				} else {
+					resizeCmds = append(resizeCmds, p.resizeTermPanelPaneCmd())
+				}
+			}
+			return tea.Batch(resizeCmds...)
+		}
+		resizeCmds := []tea.Cmd{p.resizeSelectedPaneCmd()}
+		if p.termPanelVisible {
+			resizeCmds = append(resizeCmds, p.resizeTermPanelPaneCmd())
 		}
 		if !p.sidebarVisible {
-			return tea.Batch(p.resizeSelectedPaneCmd(), appmsg.ShowToast("Sidebar hidden (\\ to restore)", 2*time.Second))
+			resizeCmds = append(resizeCmds, appmsg.ShowToast("Sidebar hidden (\\ to restore)", 2*time.Second))
 		}
-		// Resize pane in background to match new preview width
-		return p.resizeSelectedPaneCmd()
+		return tea.Batch(resizeCmds...)
 	case "tab", "shift+tab":
 		// Switch focus between panes (consistent with other plugins)
 		if p.activePane == PaneSidebar && p.sidebarVisible {
@@ -930,6 +993,15 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			if pageSize < 5 {
 				pageSize = 5
 			}
+			// Terminal panel focused: scroll terminal panel
+			if p.termPanelFocused && p.termPanelVisible {
+				if p.termPanelScroll > pageSize {
+					p.termPanelScroll -= pageSize
+				} else {
+					p.termPanelScroll = 0
+				}
+				return nil
+			}
 			if p.previewTab == PreviewTabOutput {
 				// For output, offset is from bottom
 				if p.previewOffset > pageSize {
@@ -952,6 +1024,11 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			pageSize := p.height / 2
 			if pageSize < 5 {
 				pageSize = 5
+			}
+			// Terminal panel focused: scroll terminal panel
+			if p.termPanelFocused && p.termPanelVisible {
+				p.termPanelScroll += pageSize
+				return nil
 			}
 			if p.previewTab == PreviewTabOutput {
 				// For output, offset is from bottom
@@ -1076,6 +1153,14 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		if wt != nil {
 			return p.openInGitTab(wt)
 		}
+	case "ctrl+t":
+		// Toggle terminal panel visibility (on/off with last layout)
+		p.ctx.Logger.Debug("termPanel: ctrl+t pressed", "currentlyVisible", p.termPanelVisible)
+		return p.toggleTermPanel()
+	case "alt+t":
+		// Switch terminal panel layout direction (bottom ↔ right)
+		p.ctx.Logger.Debug("termPanel: alt+t pressed, switching layout")
+		return p.switchTermPanelLayout()
 	default:
 		// Unhandled key in preview pane - flash to indicate attach is needed
 		// Only flash on the Output tab where there's a terminal to attach to.
@@ -1954,6 +2039,7 @@ func (p *Plugin) handleCommitFilesKey(msg tea.KeyMsg) tea.Cmd {
 			p.commitFileCursor++
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "k", "up":
@@ -1961,6 +2047,7 @@ func (p *Plugin) handleCommitFilesKey(msg tea.KeyMsg) tea.Cmd {
 			p.commitFileCursor--
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "g":
@@ -1969,6 +2056,7 @@ func (p *Plugin) handleCommitFilesKey(msg tea.KeyMsg) tea.Cmd {
 			p.commitFileScroll = 0
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "G":
@@ -1976,6 +2064,7 @@ func (p *Plugin) handleCommitFilesKey(msg tea.KeyMsg) tea.Cmd {
 			p.commitFileCursor = fileCount - 1
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "l", "right", "enter":
@@ -1991,6 +2080,7 @@ func (p *Plugin) handleCommitFilesKey(msg tea.KeyMsg) tea.Cmd {
 		p.commitDetail = nil
 		p.commitFileDiffRaw = ""
 		p.commitFileParsed = nil
+		p.fullFileDiff = nil
 	}
 	return nil
 }
@@ -2008,8 +2098,13 @@ func (p *Plugin) handleCommitDiffPaneKey(msg tea.KeyMsg) tea.Cmd {
 		p.diffTabDiffScroll = 0
 		p.diffTabHorizScroll = 0
 	case "G":
-		if p.commitFileParsed != nil {
-			lines := gitstatus.CountParsedDiffLines(p.commitFileParsed)
+		var lines int
+		if p.diffViewMode == DiffViewFullFile && p.fullFileDiff != nil {
+			lines = p.fullFileDiff.TotalLines()
+		} else if p.commitFileParsed != nil {
+			lines = gitstatus.CountParsedDiffLines(p.commitFileParsed)
+		}
+		if lines > 0 {
 			maxScroll := lines - (p.height - 6)
 			if maxScroll < 0 {
 				maxScroll = 0
@@ -2041,6 +2136,20 @@ func (p *Plugin) handleCommitDiffPaneKey(msg tea.KeyMsg) tea.Cmd {
 		p.diffTabFocus = DiffTabFocusCommitFiles
 		p.diffTabDiffScroll = 0
 		p.diffTabHorizScroll = 0
+	case "n":
+		if p.diffViewMode == DiffViewFullFile && p.fullFileDiff != nil {
+			next := p.fullFileDiff.NextChange(p.diffTabDiffScroll)
+			if next >= 0 {
+				p.diffTabDiffScroll = next
+			}
+		}
+	case "N":
+		if p.diffViewMode == DiffViewFullFile && p.fullFileDiff != nil {
+			prev := p.fullFileDiff.PrevChange(p.diffTabDiffScroll)
+			if prev >= 0 {
+				p.diffTabDiffScroll = prev
+			}
+		}
 	case "{":
 		// Previous file in commit
 		if p.commitDetail != nil && p.commitFileCursor > 0 {
@@ -2049,6 +2158,7 @@ func (p *Plugin) handleCommitDiffPaneKey(msg tea.KeyMsg) tea.Cmd {
 			p.diffTabHorizScroll = 0
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "}":
@@ -2059,18 +2169,30 @@ func (p *Plugin) handleCommitDiffPaneKey(msg tea.KeyMsg) tea.Cmd {
 			p.diffTabHorizScroll = 0
 			p.commitFileDiffRaw = ""
 			p.commitFileParsed = nil
+			p.fullFileDiff = nil
 			return p.loadSelectedCommitFileDiff()
 		}
 	case "v", "V":
-		// Cycle view mode (unified ↔ side-by-side for commit diffs)
+		// Cycle view mode (unified → side-by-side → full-file)
 		p.diffTabDiffScroll = 0
 		p.diffTabHorizScroll = 0
-		if p.diffViewMode == DiffViewUnified {
+		switch p.diffViewMode {
+		case DiffViewUnified:
 			p.diffViewMode = DiffViewSideBySide
 			_ = state.SetWorkspaceDiffMode("side-by-side")
-		} else {
+		case DiffViewSideBySide:
+			p.diffViewMode = DiffViewFullFile
+			_ = state.SetWorkspaceDiffMode("full-file")
+			if p.fullFileDiff == nil {
+				return p.loadFullFileDiffForCommit()
+			}
+		default:
+			if p.fullFileDiff != nil && p.commitFileParsed != nil && p.diffTabDiffScroll > 0 {
+				p.diffTabDiffScroll = p.fullFileDiff.FullFileLineToHunkLine(p.diffTabDiffScroll, p.commitFileParsed)
+			}
 			p.diffViewMode = DiffViewUnified
 			_ = state.SetWorkspaceDiffMode("unified")
+			p.fullFileDiff = nil
 		}
 	}
 	return nil

@@ -123,6 +123,31 @@ func (p *Plugin) updateStatus(msg tea.KeyMsg) (plugin.Plugin, tea.Cmd) {
 			p.activePane = PaneDiff
 		}
 
+	case "+":
+		// Grow sidebar width
+		if p.sidebarVisible {
+			available := p.width - dividerWidth
+			maxWidth := available - 40
+			p.sidebarWidth += 3
+			if p.sidebarWidth > maxWidth {
+				p.sidebarWidth = maxWidth
+			}
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
+		}
+
+	case "-":
+		// Shrink sidebar width
+		if p.sidebarVisible {
+			p.sidebarWidth -= 3
+			if p.sidebarWidth < 25 {
+				p.sidebarWidth = 25
+			}
+			available := p.width - dividerWidth
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
+		}
+
 	case "\\":
 		// Toggle sidebar visibility
 		p.toggleSidebar()
@@ -565,6 +590,31 @@ func (p *Plugin) updateStatusDiffPane(msg tea.KeyMsg) (plugin.Plugin, tea.Cmd) {
 			p.activePane = PaneSidebar
 		}
 
+	case "+":
+		// Grow sidebar width
+		if p.sidebarVisible {
+			available := p.width - dividerWidth
+			maxWidth := available - 40
+			p.sidebarWidth += 3
+			if p.sidebarWidth > maxWidth {
+				p.sidebarWidth = maxWidth
+			}
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
+		}
+
+	case "-":
+		// Shrink sidebar width
+		if p.sidebarVisible {
+			p.sidebarWidth -= 3
+			if p.sidebarWidth < 25 {
+				p.sidebarWidth = 25
+			}
+			available := p.width - dividerWidth
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
+		}
+
 	case "\\":
 		// Toggle sidebar visibility
 		p.toggleSidebar()
@@ -659,6 +709,31 @@ func (p *Plugin) updateCommitPreviewPane(msg tea.KeyMsg) (plugin.Plugin, tea.Cmd
 		// Switch focus to sidebar (if visible)
 		if p.sidebarVisible {
 			p.activePane = PaneSidebar
+		}
+
+	case "+":
+		// Grow sidebar width
+		if p.sidebarVisible {
+			available := p.width - dividerWidth
+			maxWidth := available - 40
+			p.sidebarWidth += 3
+			if p.sidebarWidth > maxWidth {
+				p.sidebarWidth = maxWidth
+			}
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
+		}
+
+	case "-":
+		// Shrink sidebar width
+		if p.sidebarVisible {
+			p.sidebarWidth -= 3
+			if p.sidebarWidth < 25 {
+				p.sidebarWidth = 25
+			}
+			available := p.width - dividerWidth
+			p.diffPaneWidth = available - p.sidebarWidth
+			_ = state.SetGitStatusSidebarWidth(p.sidebarWidth)
 		}
 
 	case "\\":

@@ -139,9 +139,8 @@ type Plugin struct {
 	selectedIdx         int
 	scrollOffset        int // Sidebar list scroll offset
 	visibleCount        int // Number of visible list items
-	previewOffset       int
-	autoScrollOutput    bool      // Auto-scroll output to follow agent (paused when user scrolls up)
-	scrollBaseLineCount int       // Snapshot of lineCount when scroll started (td-f7c8be: prevents bounce on poll)
+	previewOffset    int  // Scroll offset: absolute line from top (0 = first line) for all tabs
+	autoScrollOutput bool // Auto-scroll output to follow agent (paused when user scrolls up)
 	sidebarWidth        int       // Persisted sidebar width
 	sidebarVisible      bool      // Whether sidebar is visible (toggled with \)
 	flashPreviewTime    time.Time // When preview flash was triggered
@@ -270,10 +269,11 @@ type Plugin struct {
 	taskLoading       bool // True when task fetch is in progress
 
 	// Markdown rendering for task view
-	markdownRenderer     *markdown.Renderer
-	taskMarkdownMode     bool     // true = rendered, false = raw
-	taskMarkdownRendered []string // Cached rendered lines
-	taskMarkdownWidth    int      // Width used for cached render
+	markdownRenderer       *markdown.Renderer
+	taskMarkdownMode       bool     // true = rendered, false = raw
+	taskMarkdownRendered   []string // Cached rendered lines
+	taskMarkdownWidth      int      // Width used for cached render
+	taskRenderedLineCount  int      // Total line count of last task render (for scroll clamping)
 
 	// Merge workflow state
 	mergeState      *MergeWorkflowState
@@ -739,35 +739,58 @@ func (p *Plugin) backgroundPollInterval() time.Duration {
 	return pollIntervalUnfocused
 }
 
-// captureScrollBaseLineCount snapshots the current line count when scroll starts (td-f7c8be).
-// This prevents "bounce-scroll" where polling adds content and shifts the view.
-// Only captures if scrollBaseLineCount is not already set (first scroll in session).
-func (p *Plugin) captureScrollBaseLineCount() {
-	if p.scrollBaseLineCount > 0 {
-		return // Already captured
-	}
-
-	// Get line count from currently selected worktree or shell
-	var lineCount int
+// getOutputLineCount returns the line count of the currently visible output buffer.
+func (p *Plugin) getOutputLineCount() int {
 	if p.shellSelected {
 		if shell := p.getSelectedShell(); shell != nil && shell.Agent != nil && shell.Agent.OutputBuf != nil {
-			lineCount = shell.Agent.OutputBuf.LineCount()
+			return shell.Agent.OutputBuf.LineCount()
 		}
 	} else {
 		if wt := p.selectedWorktree(); wt != nil && wt.Agent != nil && wt.Agent.OutputBuf != nil {
-			lineCount = wt.Agent.OutputBuf.LineCount()
+			return wt.Agent.OutputBuf.LineCount()
 		}
 	}
-
-	if lineCount > 0 {
-		p.scrollBaseLineCount = lineCount
-	}
+	return 0
 }
 
-// resetScrollBaseLineCount clears the captured line count (td-f7c8be).
-// Called when user scrolls back to bottom (autoScrollOutput = true) or changes selection.
-func (p *Plugin) resetScrollBaseLineCount() {
-	p.scrollBaseLineCount = 0
+// getPreviewVisibleHeight estimates the visible content height for scroll clamping.
+// The exact height is only known during render, but this is close enough for key handling.
+func (p *Plugin) getPreviewVisibleHeight() int {
+	h := p.height - 4 // tabs header + empty line + hint line + margin
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// getMaxScrollOffset returns the maximum scroll offset for the current preview content.
+// offset=0 means top of content; maxOffset means the furthest the user can scroll down.
+func (p *Plugin) getMaxScrollOffset() int {
+	var contentHeight int
+	switch {
+	case p.shellSelected:
+		contentHeight = p.getOutputLineCount()
+	default:
+		switch p.previewTab {
+		case PreviewTabOutput:
+			contentHeight = p.getOutputLineCount()
+		case PreviewTabTask:
+			contentHeight = p.taskRenderedLineCount
+		default:
+			return 0 // Diff tab uses its own scroll state
+		}
+	}
+	visibleHeight := p.getPreviewVisibleHeight()
+	maxOffset := contentHeight - visibleHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	return maxOffset
+}
+
+// scrollToBottom sets previewOffset to show the latest content.
+func (p *Plugin) scrollToBottom() {
+	p.previewOffset = p.getMaxScrollOffset()
 }
 
 // pollSelectedAgentNowIfVisible triggers an immediate poll for visible output.
@@ -1057,8 +1080,7 @@ func (p *Plugin) moveCursor(delta int) {
 	if selectionChanged {
 		p.previewOffset = 0
 		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
-		p.taskLoading = false        // Reset task loading state for new selection (td-3668584f)
+		p.taskLoading = false // Reset task loading state for new selection (td-3668584f)
 		p.multiFileDiff = nil        // Clear stale multi-file diff from previous worktree
 		p.fullFileDiff = nil         // Clear stale full-file diff from previous worktree
 		p.commitStatusList = nil     // Clear stale commit list from previous worktree
@@ -1110,9 +1132,8 @@ func (p *Plugin) cyclePreviewTab(delta int) tea.Cmd {
 	prevTab := p.previewTab
 	p.previewTab = PreviewTab((int(p.previewTab) + delta + 3) % 3)
 	p.previewOffset = 0
-	p.termPanelFocused = false   // Reset terminal panel focus when switching tabs
-	p.autoScrollOutput = true    // Reset auto-scroll when switching tabs
-	p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot when switching tabs
+	p.termPanelFocused = false // Reset terminal panel focus when switching tabs
+	p.autoScrollOutput = true  // Reset auto-scroll when switching tabs
 
 	if prevTab == PreviewTabOutput && p.previewTab != PreviewTabOutput {
 		p.selection.Clear()

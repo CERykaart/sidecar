@@ -990,10 +990,9 @@ func (p *Plugin) handleInteractiveKeys(msg tea.KeyMsg) tea.Cmd {
 
 	if msg.String() == p.getInteractivePasteKey() {
 		p.interactiveState.LastKeyTime = time.Now()
-		if p.previewOffset > 0 {
-			p.previewOffset = 0
+		if !p.autoScrollOutput {
 			p.autoScrollOutput = true
-			p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
+			p.scrollToBottom()
 		}
 		cmds = append(cmds, p.pasteClipboardToTmuxCmd())
 		return tea.Batch(cmds...)
@@ -1007,10 +1006,9 @@ func (p *Plugin) handleInteractiveKeys(msg tea.KeyMsg) tea.Cmd {
 	// 1. Don't snap back if we recently scrolled (time-based protection)
 	// 2. Don't snap back for mouse sequence fragments
 	// 3. Only snap back for actual user typing (single printable chars or specific keys)
-	if p.previewOffset > 0 && p.shouldSnapBack(msg) {
-		p.previewOffset = 0
+	if !p.autoScrollOutput && p.shouldSnapBack(msg) {
 		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
+		p.scrollToBottom()
 	}
 
 	sessionName := p.interactiveState.TargetSession
@@ -1161,18 +1159,19 @@ func (p *Plugin) forwardScrollToTmux(delta int) tea.Cmd {
 	}
 
 	if delta < 0 {
-		// Scroll up: pause auto-scroll, show older content
-		p.autoScrollOutput = false
-		p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
-		p.previewOffset++
-	} else {
-		// Scroll down: show newer content, resume auto-scroll at bottom
+		// Scroll up: move toward top of content
 		if p.previewOffset > 0 {
 			p.previewOffset--
-			if p.previewOffset == 0 {
-				p.autoScrollOutput = true
-				p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
-			}
+		}
+		p.autoScrollOutput = false
+	} else {
+		// Scroll down: move toward bottom of content
+		maxOffset := p.getMaxScrollOffset()
+		if p.previewOffset < maxOffset {
+			p.previewOffset++
+		}
+		if p.previewOffset >= maxOffset {
+			p.autoScrollOutput = true
 		}
 	}
 	return nil

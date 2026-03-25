@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"fmt"
-	"math"
 	"os/exec"
 	"strings"
 	"time"
@@ -593,12 +592,16 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		if p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
-		// Shell/other tabs: scroll down toward newer content (decrease offset from bottom)
-		if p.previewOffset > 0 {
-			p.previewOffset--
-			if p.previewOffset == 0 {
-				p.autoScrollOutput = true    // Resume auto-scroll when at bottom
-				p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
+		// Scroll down: increase offset (toward bottom of content)
+		maxOffset := p.getMaxScrollOffset()
+		if p.previewOffset < maxOffset {
+			p.previewOffset++
+		}
+		if p.previewTab == PreviewTabOutput || p.shellSelected {
+			if p.previewOffset >= maxOffset {
+				p.autoScrollOutput = true
+			} else {
+				p.autoScrollOutput = false
 			}
 		}
 	case "k", "up":
@@ -624,9 +627,13 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		if p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
-		p.autoScrollOutput = false
-		p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
-		p.previewOffset++
+		// Scroll up: decrease offset (toward top of content)
+		if p.previewOffset > 0 {
+			p.previewOffset--
+		}
+		if p.previewTab == PreviewTabOutput || p.shellSelected {
+			p.autoScrollOutput = false
+		}
 	case "g":
 		if p.viewMode == ViewModeKanban {
 			// Kanban mode: jump cursor to top of current column
@@ -662,10 +669,11 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 		if p.previewTab == PreviewTabDiff {
 			return p.handleDiffTabKey(msg)
 		}
-		// Go to top (oldest content) - pause auto-scroll
-		p.autoScrollOutput = false
-		p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
-		p.previewOffset = math.MaxInt  // Will be clamped in render
+		// Go to top (first line) - pause auto-scroll
+		p.previewOffset = 0
+		if p.previewTab == PreviewTabOutput || p.shellSelected {
+			p.autoScrollOutput = false
+		}
 	case "G":
 		if p.viewMode == ViewModeKanban {
 			// Kanban mode: jump cursor to bottom of current column
@@ -700,9 +708,10 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			return p.handleDiffTabKey(msg)
 		}
 		// Go to bottom (newest content) - resume auto-scroll
-		p.previewOffset = 0
-		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
+		p.previewOffset = p.getMaxScrollOffset()
+		if p.previewTab == PreviewTabOutput || p.shellSelected {
+			p.autoScrollOutput = true
+		}
 	case "n":
 		// In diff tab: handle internally (next change navigation)
 		if p.activePane == PanePreview && p.previewTab == PreviewTabDiff {
@@ -984,7 +993,7 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 			return p.handleDiffTabKey(msg)
 		}
 	case "ctrl+d":
-		// Page down in preview pane
+		// Page down in preview pane (unified: increase offset toward bottom)
 		if p.activePane == PanePreview {
 			if p.previewTab == PreviewTabDiff {
 				return p.handleDiffTabKey(msg)
@@ -1002,21 +1011,17 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 				}
 				return nil
 			}
-			if p.previewTab == PreviewTabOutput {
-				// For output, offset is from bottom
-				if p.previewOffset > pageSize {
-					p.previewOffset -= pageSize
-				} else {
-					p.previewOffset = 0
-					p.autoScrollOutput = true
-					p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
-				}
-			} else {
-				p.previewOffset += pageSize
+			maxOffset := p.getMaxScrollOffset()
+			p.previewOffset += pageSize
+			if p.previewOffset > maxOffset {
+				p.previewOffset = maxOffset
+			}
+			if (p.previewTab == PreviewTabOutput || p.shellSelected) && p.previewOffset >= maxOffset {
+				p.autoScrollOutput = true
 			}
 		}
 	case "ctrl+u":
-		// Page up in preview pane
+		// Page up in preview pane (unified: decrease offset toward top)
 		if p.activePane == PanePreview {
 			if p.previewTab == PreviewTabDiff {
 				return p.handleDiffTabKey(msg)
@@ -1030,17 +1035,12 @@ func (p *Plugin) handleListKeys(msg tea.KeyMsg) tea.Cmd {
 				p.termPanelScroll += pageSize
 				return nil
 			}
-			if p.previewTab == PreviewTabOutput {
-				// For output, offset is from bottom
+			p.previewOffset -= pageSize
+			if p.previewOffset < 0 {
+				p.previewOffset = 0
+			}
+			if p.previewTab == PreviewTabOutput || p.shellSelected {
 				p.autoScrollOutput = false
-				p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
-				p.previewOffset += pageSize
-			} else {
-				if p.previewOffset > pageSize {
-					p.previewOffset -= pageSize
-				} else {
-					p.previewOffset = 0
-				}
 			}
 		}
 	// Agent control keys

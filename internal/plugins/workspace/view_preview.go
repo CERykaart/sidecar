@@ -308,6 +308,8 @@ func (p *Plugin) renderOutputContent(width, height int) string {
 		}
 	}
 
+	// Unified scroll: previewOffset is absolute line from top (0 = first line).
+	// Auto-scroll keeps offset pinned to the bottom so newest content is visible.
 	var start, end int
 	if p.autoScrollOutput {
 		// Auto-scroll: show newest content (last visibleHeight lines)
@@ -316,16 +318,11 @@ func (p *Plugin) renderOutputContent(width, height int) string {
 			start = 0
 		}
 		end = effectiveLineCount
+		// Keep previewOffset in sync so switching to manual scroll is seamless
+		p.previewOffset = start
 	} else {
-		// Manual scroll: previewOffset is lines from bottom
-		// offset=0 means bottom, offset=N means N lines up from bottom
-		// td-f7c8be: Use scrollBaseLineCount to prevent bounce when polling adds content.
-		// Without this, added lines shift the view because offset is relative to bottom.
-		baseCount := effectiveLineCount
-		if p.scrollBaseLineCount > 0 && p.scrollBaseLineCount <= effectiveLineCount {
-			baseCount = p.scrollBaseLineCount
-		}
-		start = baseCount - visibleHeight - p.previewOffset
+		// Manual scroll: offset is line number from top
+		start = p.previewOffset
 		if start < 0 {
 			start = 0
 		}
@@ -519,6 +516,7 @@ func (p *Plugin) renderShellOutput(width, height int) string {
 		}
 	}
 
+	// Unified scroll: previewOffset is absolute line from top (0 = first line).
 	var start, end int
 	if p.autoScrollOutput {
 		// Auto-scroll: show newest content (last visibleHeight lines)
@@ -527,14 +525,11 @@ func (p *Plugin) renderShellOutput(width, height int) string {
 			start = 0
 		}
 		end = effectiveLineCount
+		// Keep previewOffset in sync so switching to manual scroll is seamless
+		p.previewOffset = start
 	} else {
-		// Manual scroll: previewOffset is lines from bottom
-		// td-f7c8be: Use scrollBaseLineCount to prevent bounce when polling adds content.
-		baseCount := effectiveLineCount
-		if p.scrollBaseLineCount > 0 && p.scrollBaseLineCount <= effectiveLineCount {
-			baseCount = p.scrollBaseLineCount
-		}
-		start = baseCount - visibleHeight - p.previewOffset
+		// Manual scroll: offset is line number from top
+		start = p.previewOffset
 		if start < 0 {
 			start = 0
 		}
@@ -828,6 +823,24 @@ func (p *Plugin) renderTaskContent(width, height int) string {
 	}
 	if task.UpdatedAt != "" {
 		lines = append(lines, dimText(fmt.Sprintf("Updated: %s", task.UpdatedAt)))
+	}
+
+	// Track total line count for scroll clamping
+	p.taskRenderedLineCount = len(lines)
+
+	// Apply scroll offset (unified: previewOffset = line from top)
+	if p.previewOffset > 0 && p.previewOffset < len(lines) {
+		lines = lines[p.previewOffset:]
+	} else if p.previewOffset >= len(lines) {
+		// Clamp: offset past content, show last page
+		if len(lines) > height {
+			lines = lines[len(lines)-height:]
+		}
+	}
+
+	// Trim to visible height
+	if len(lines) > height {
+		lines = lines[:height]
 	}
 
 	return strings.Join(lines, "\n")

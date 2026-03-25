@@ -107,7 +107,6 @@ func (p *Plugin) applyKanbanSelectionChange(oldShellSelected bool, oldShellIdx, 
 	if selectionChanged {
 		p.previewOffset = 0
 		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
 		p.taskLoading = false
 		p.exitInteractiveMode()
 		p.saveSelectionState()

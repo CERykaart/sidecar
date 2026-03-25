@@ -612,7 +612,6 @@ func (p *Plugin) handleMouseClick(action mouse.MouseAction) tea.Cmd {
 						p.selectedShellIdx = shellIdx
 						p.previewOffset = 0
 						p.autoScrollOutput = true
-						p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
 						p.taskLoading = false // Reset task loading on selection change (td-3668584f)
 						// Exit interactive mode when switching selection (td-fc758e88)
 						p.exitInteractiveMode()
@@ -628,7 +627,6 @@ func (p *Plugin) handleMouseClick(action mouse.MouseAction) tea.Cmd {
 					p.selectedIdx = idx
 					p.previewOffset = 0
 					p.autoScrollOutput = true
-					p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
 					p.taskLoading = false // Reset task loading on selection change (td-3668584f)
 					// Exit interactive mode when switching selection (td-fc758e88)
 					p.exitInteractiveMode()
@@ -647,7 +645,6 @@ func (p *Plugin) handleMouseClick(action mouse.MouseAction) tea.Cmd {
 			p.previewOffset = 0
 			p.termPanelFocused = false // Reset terminal panel focus when switching tabs
 			p.autoScrollOutput = true
-			p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot when switching tabs
 			if prevTab == PreviewTabOutput && p.previewTab != PreviewTabOutput {
 				p.selection.Clear()
 			}
@@ -1194,10 +1191,9 @@ func (p *Plugin) scrollDiffTabCommitFileList(delta int) tea.Cmd {
 
 // scrollPreview scrolls the preview pane content.
 func (p *Plugin) scrollPreview(delta int) tea.Cmd {
-	// For output tab with auto-scroll, handle scroll direction correctly:
-	// - Scroll UP (delta < 0): show older content (increase offset from bottom)
-	// - Scroll DOWN (delta > 0): show newer content (decrease offset from bottom)
-	if p.previewTab == PreviewTabOutput {
+	// Unified scroll: delta < 0 = scroll up (toward top), delta > 0 = scroll down (toward bottom)
+	// Output tab uses burst debouncing for trackpad scroll smoothness.
+	if p.previewTab == PreviewTabOutput || p.shellSelected {
 		now := time.Now()
 
 		// Detect and handle scroll bursts (fast trackpad scrolling)
@@ -1220,27 +1216,25 @@ func (p *Plugin) scrollPreview(delta int) tea.Cmd {
 			return nil
 		}
 		p.lastScrollTime = now
+	}
 
-		if delta < 0 {
-			// Scroll UP: pause auto-scroll, show older content
+	// Unified offset: 0 = top of content, higher = further down
+	maxOffset := p.getMaxScrollOffset()
+	if delta < 0 {
+		// Scroll UP: move toward top of content
+		if p.previewOffset > 0 {
+			p.previewOffset--
+		}
+		if p.previewTab == PreviewTabOutput || p.shellSelected {
 			p.autoScrollOutput = false
-			p.captureScrollBaseLineCount() // td-f7c8be: prevent bounce on poll
-			p.previewOffset++
-		} else {
-			// Scroll DOWN: show newer content
-			if p.previewOffset > 0 {
-				p.previewOffset--
-				if p.previewOffset == 0 {
-					p.autoScrollOutput = true // Resume auto-scroll when at bottom
-					p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot
-				}
-			}
 		}
 	} else {
-		// For other tabs (diff, task), use simple offset
-		p.previewOffset += delta
-		if p.previewOffset < 0 {
-			p.previewOffset = 0
+		// Scroll DOWN: move toward bottom of content
+		if p.previewOffset < maxOffset {
+			p.previewOffset++
+		}
+		if (p.previewTab == PreviewTabOutput || p.shellSelected) && p.previewOffset >= maxOffset {
+			p.autoScrollOutput = true
 		}
 	}
 	return nil

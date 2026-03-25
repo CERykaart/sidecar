@@ -305,7 +305,6 @@ func (p *Plugin) Update(msg tea.Msg) (plugin.Plugin, tea.Cmd) {
 			p.selectedIdx = len(p.worktrees) - 1
 			p.previewOffset = 0
 			p.autoScrollOutput = true
-			p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
 			p.saveSelectionState()
 			p.ensureVisible()
 
@@ -422,7 +421,6 @@ func (p *Plugin) Update(msg tea.Msg) (plugin.Plugin, tea.Cmd) {
 					p.selectedIdx = i
 					p.previewOffset = 0
 					p.autoScrollOutput = true
-					p.resetScrollBaseLineCount()
 					p.saveSelectionState()
 					p.ensureVisible()
 					p.clearFetchPRState()
@@ -444,7 +442,6 @@ func (p *Plugin) Update(msg tea.Msg) (plugin.Plugin, tea.Cmd) {
 			p.selectedIdx = len(p.worktrees) - 1
 			p.previewOffset = 0
 			p.autoScrollOutput = true
-			p.resetScrollBaseLineCount()
 			p.saveSelectionState()
 			p.ensureVisible()
 			p.clearFetchPRState()
@@ -745,7 +742,6 @@ func (p *Plugin) Update(msg tea.Msg) (plugin.Plugin, tea.Cmd) {
 		}
 		p.activePane = PaneSidebar
 		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new shell
 
 		// Resize pane to match preview width immediately
 		if cmd := p.resizeSelectedPaneCmd(); cmd != nil {
@@ -851,7 +847,6 @@ func (p *Plugin) Update(msg tea.Msg) (plugin.Plugin, tea.Cmd) {
 		p.selectedIdx = len(p.worktrees) - 1
 		p.previewOffset = 0
 		p.autoScrollOutput = true
-		p.resetScrollBaseLineCount() // td-f7c8be: clear snapshot for new selection
 		p.saveSelectionState()
 		p.ensureVisible()
 

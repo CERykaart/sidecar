@@ -838,27 +838,30 @@ func TestGetInteractiveExitKey_VariousKeys(t *testing.T) {
 	}
 }
 
-// TestForwardScrollToTmux_ScrollUp tests that scroll up pauses auto-scroll
+// TestForwardScrollToTmux_ScrollUp tests that scroll up pauses auto-scroll (top-down offset)
 func TestForwardScrollToTmux_ScrollUp(t *testing.T) {
-	p := &Plugin{autoScrollOutput: true, previewOffset: 0}
+	// previewOffset=5 means we're 5 lines from top; scroll up decreases it
+	p := &Plugin{autoScrollOutput: true, previewOffset: 5}
 	p.forwardScrollToTmux(-1)
 	if p.autoScrollOutput {
 		t.Error("expected autoScrollOutput=false after scroll up")
 	}
-	if p.previewOffset != 1 {
-		t.Errorf("expected previewOffset=1, got %d", p.previewOffset)
+	if p.previewOffset != 4 {
+		t.Errorf("expected previewOffset=4, got %d", p.previewOffset)
 	}
 }
 
-// TestForwardScrollToTmux_ScrollDown tests that scroll down resumes auto-scroll at bottom
+// TestForwardScrollToTmux_ScrollDown tests that scroll down resumes auto-scroll at bottom (top-down offset)
 func TestForwardScrollToTmux_ScrollDown(t *testing.T) {
-	p := &Plugin{autoScrollOutput: false, previewOffset: 1}
+	// With no content loaded, maxOffset=0. previewOffset=0 is already at bottom.
+	// Scroll down should enable auto-scroll when at max offset.
+	p := &Plugin{autoScrollOutput: false, previewOffset: 0, height: 10}
 	p.forwardScrollToTmux(1)
 	if !p.autoScrollOutput {
-		t.Error("expected autoScrollOutput=true after scrolling to bottom")
+		t.Error("expected autoScrollOutput=true after scrolling to bottom (maxOffset=0)")
 	}
 	if p.previewOffset != 0 {
-		t.Errorf("expected previewOffset=0, got %d", p.previewOffset)
+		t.Errorf("expected previewOffset=0 (clamped to maxOffset), got %d", p.previewOffset)
 	}
 }
 

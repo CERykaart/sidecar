@@ -136,7 +136,7 @@ func GetNewFileDiff(workDir, path string) (string, error) {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", path, path))
 		sb.WriteString("new file mode 100644\n")
-		sb.WriteString(fmt.Sprintf("Binary file %s\n", path))
+		sb.WriteString(fmt.Sprintf("Binary files /dev/null and b/%s differ\n", path))
 		return sb.String(), nil
 	}
 

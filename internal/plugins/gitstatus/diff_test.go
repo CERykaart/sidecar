@@ -122,3 +122,120 @@ func TestGetNewFileDiff_NotExists(t *testing.T) {
 		t.Error("expected error for nonexistent file")
 	}
 }
+
+func TestGetNewFileDiff_Binary(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := "image.png"
+	// Content with null bytes to trigger binary detection
+	content := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00}
+	if err := os.WriteFile(filepath.Join(tmpDir, testFile), content, 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	diff, err := GetNewFileDiff(tmpDir, testFile)
+	if err != nil {
+		t.Fatalf("GetNewFileDiff failed: %v", err)
+	}
+
+	if !strings.Contains(diff, "new file mode") {
+		t.Error("binary diff should contain 'new file mode' header")
+	}
+	// Should use git's standard format: "Binary files ... differ"
+	if !strings.Contains(diff, "Binary files") {
+		t.Error("binary diff should contain 'Binary files' indicator")
+	}
+	if !strings.Contains(diff, "differ") {
+		t.Error("binary diff should contain 'differ' suffix matching git format")
+	}
+}
+
+func TestGetNewFileDiff_ParserCompatibility(t *testing.T) {
+	// Verify that synthetic new-file diffs can be parsed by ParseMultiFileDiff
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "new.go"), []byte("package main\n\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := GetNewFileDiff(tmpDir, "new.go")
+	if err != nil {
+		t.Fatalf("GetNewFileDiff failed: %v", err)
+	}
+
+	// Parse with the multi-file parser
+	result := ParseMultiFileDiff(diff)
+	if len(result.Files) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(result.Files))
+	}
+
+	file := result.Files[0]
+	if file.Diff.OldFile != "/dev/null" {
+		t.Errorf("OldFile = %q, want /dev/null", file.Diff.OldFile)
+	}
+	if file.Diff.NewFile != "new.go" {
+		t.Errorf("NewFile = %q, want new.go", file.Diff.NewFile)
+	}
+	if file.Additions < 3 {
+		t.Errorf("expected at least 3 additions, got %d", file.Additions)
+	}
+	if file.Deletions != 0 {
+		t.Errorf("expected 0 deletions for new file, got %d", file.Deletions)
+	}
+}
+
+func TestParseMultiFileDiff_MixedTrackedAndNew(t *testing.T) {
+	// Simulate a combined diff: one tracked file modification + one new file
+	diff := `diff --git a/existing.go b/existing.go
+--- a/existing.go
++++ b/existing.go
+@@ -1,3 +1,4 @@
+ package main
+
++import "fmt"
+ func main() {}
+diff --git a/newfile.txt b/newfile.txt
+new file mode 100644
+--- /dev/null
++++ b/newfile.txt
+@@ -0,0 +1,2 @@
++hello
++world`
+
+	result := ParseMultiFileDiff(diff)
+	if len(result.Files) != 2 {
+		t.Fatalf("expected 2 file diffs, got %d", len(result.Files))
+	}
+
+	// First file: tracked modification
+	if result.Files[0].Diff.NewFile != "existing.go" {
+		t.Errorf("first file NewFile = %q, want existing.go", result.Files[0].Diff.NewFile)
+	}
+	if result.Files[0].Additions != 1 {
+		t.Errorf("first file additions = %d, want 1", result.Files[0].Additions)
+	}
+
+	// Second file: new file
+	if result.Files[1].Diff.NewFile != "newfile.txt" {
+		t.Errorf("second file NewFile = %q, want newfile.txt", result.Files[1].Diff.NewFile)
+	}
+	if result.Files[1].Diff.OldFile != "/dev/null" {
+		t.Errorf("second file OldFile = %q, want /dev/null", result.Files[1].Diff.OldFile)
+	}
+	if result.Files[1].Additions != 2 {
+		t.Errorf("second file additions = %d, want 2", result.Files[1].Additions)
+	}
+}
+
+func TestParseMultiFileDiff_BinaryNewFile(t *testing.T) {
+	diff := `diff --git a/image.png b/image.png
+new file mode 100644
+Binary files /dev/null and b/image.png differ`
+
+	result := ParseMultiFileDiff(diff)
+	if len(result.Files) != 1 {
+		t.Fatalf("expected 1 file diff, got %d", len(result.Files))
+	}
+
+	if !result.Files[0].Diff.Binary {
+		t.Error("binary new file should be marked as binary")
+	}
+}

@@ -1,12 +1,26 @@
 package workspace
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/marcus/sidecar/internal/plugins/gitstatus"
+)
+
+const (
+	// maxUntrackedFileSize is the maximum size of an untracked file to include
+	// as a full diff. Files larger than this get a size warning instead.
+	maxUntrackedFileSize = 1 << 20 // 1 MB
+
+	// maxUntrackedFiles is the maximum number of untracked files to include
+	// as synthetic diffs. This prevents performance issues in repos with many
+	// untracked files (e.g., missing .gitignore entries).
+	maxUntrackedFiles = 50
 )
 
 // loadSelectedDiff returns a command to load diff for the selected worktree.
@@ -69,6 +83,7 @@ func getDiff(workdir string) (content, raw string, err error) {
 
 // getUntrackedFileDiffs returns synthetic diff output for untracked files in the worktree.
 // Each untracked file is shown as a new file with all lines as additions.
+// Respects maxUntrackedFiles and maxUntrackedFileSize limits to avoid performance issues.
 func getUntrackedFileDiffs(workdir string) string {
 	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
 	cmd.Dir = workdir
@@ -82,12 +97,19 @@ func getUntrackedFileDiffs(workdir string) string {
 		return ""
 	}
 
+	// Cap the number of untracked files to prevent performance issues
+	if len(files) > maxUntrackedFiles {
+		files = files[:maxUntrackedFiles]
+	}
+
 	var sb strings.Builder
 	for _, file := range files {
 		if file == "" {
 			continue
 		}
-		diff, err := gitstatus.GetNewFileDiff(workdir, file)
+
+		// Check file size before reading — skip files larger than the limit
+		diff, err := getUntrackedFileDiff(workdir, file)
 		if err != nil {
 			continue
 		}
@@ -97,6 +119,30 @@ func getUntrackedFileDiffs(workdir string) string {
 		sb.WriteString(diff)
 	}
 	return sb.String()
+}
+
+// getUntrackedFileDiff returns a synthetic diff for a single untracked file.
+// Files exceeding maxUntrackedFileSize get a size warning instead of full content.
+func getUntrackedFileDiff(workdir, file string) (string, error) {
+	fullPath := filepath.Join(workdir, file)
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return "", err
+	}
+
+	if info.Size() > maxUntrackedFileSize {
+		// Generate a truncated diff with size warning
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", file, file))
+		sb.WriteString("new file mode 100644\n")
+		sb.WriteString("--- /dev/null\n")
+		sb.WriteString(fmt.Sprintf("+++ b/%s\n", file))
+		sb.WriteString("@@ -0,0 +1,1 @@\n")
+		sb.WriteString(fmt.Sprintf("+[File too large to display: %s (%d bytes)]\n", file, info.Size()))
+		return sb.String(), nil
+	}
+
+	return gitstatus.GetNewFileDiff(workdir, file)
 }
 
 // getDiffStatFromBase returns the --stat output compared to the base branch.
